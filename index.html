@@ -1,1 +1,402 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Scanner TNE · Duoc UC PV</title>
 
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+
+  <style>
+    :root{
+      --duoc-black:#111111;
+      --duoc-yellow:#F7B500;
+      --duoc-white:#FFFFFF;
+      --duoc-gray:#F4F4F4;
+      --duoc-border:#D9D9D9;
+      --duoc-green:#1E8E3E;
+      --duoc-red:#C62828;
+      --duoc-amber:#F9A825;
+    }
+
+    *{ box-sizing:border-box; }
+
+    body{
+      margin:0;
+      font-family:Arial, Helvetica, sans-serif;
+      background:var(--duoc-gray);
+      color:var(--duoc-black);
+      min-height:100vh;
+    }
+
+    .topbar{
+      background:var(--duoc-black);
+      color:var(--duoc-white);
+      padding:18px 20px;
+      border-bottom:6px solid var(--duoc-yellow);
+    }
+
+    .topbar h1{
+      margin:0;
+      font-size:24px;
+      line-height:1.1;
+    }
+
+    .topbar p{
+      margin:6px 0 0;
+      font-size:14px;
+      opacity:.88;
+    }
+
+    .wrap{
+      max-width:760px;
+      margin:18px auto;
+      padding:0 14px 24px;
+    }
+
+    .card{
+      background:#fff;
+      border-radius:20px;
+      padding:18px;
+      box-shadow:0 10px 28px rgba(0,0,0,.08);
+    }
+
+    .status{
+      margin:0 0 14px;
+      padding:12px 14px;
+      border-radius:14px;
+      font-size:15px;
+      font-weight:700;
+      line-height:1.35;
+    }
+
+    .status.warn{
+      background:#FFF8E1;
+      color:#8A5C00;
+      border:1px solid #F4D277;
+    }
+
+    .status.ok{
+      background:#E6F4EA;
+      color:var(--duoc-green);
+      border:1px solid #B7DFC1;
+    }
+
+    .status.error{
+      background:#FDECEA;
+      color:var(--duoc-red);
+      border:1px solid #F1B9B9;
+    }
+
+    .reader-shell{
+      background:#111;
+      border-radius:18px;
+      padding:12px;
+      overflow:hidden;
+    }
+
+    #reader{
+      width:100%;
+      min-height:320px;
+      border-radius:14px;
+      overflow:hidden;
+      background:#111;
+    }
+
+    #reader video{
+      border-radius:14px;
+    }
+
+    .actions{
+      display:flex;
+      gap:10px;
+      margin-top:14px;
+      flex-wrap:wrap;
+    }
+
+    button{
+      border:0;
+      border-radius:14px;
+      padding:15px 16px;
+      font-size:15px;
+      font-weight:700;
+      cursor:pointer;
+      flex:1;
+      min-width:190px;
+    }
+
+    .btn-yellow{
+      background:var(--duoc-yellow);
+      color:#111;
+    }
+
+    .btn-light{
+      background:#ECECEC;
+      color:#111;
+    }
+
+    .hint{
+      margin:14px 0 0;
+      color:#666;
+      font-size:13px;
+      line-height:1.45;
+    }
+
+    .pill{
+      display:inline-block;
+      background:#FFF4D6;
+      border:1px solid #E9C45B;
+      color:#765300;
+      border-radius:999px;
+      padding:7px 11px;
+      font-size:12px;
+      font-weight:700;
+      margin-bottom:12px;
+    }
+
+    @media (max-width:600px){
+      .topbar h1{ font-size:21px; }
+      .card{ padding:14px; }
+      #reader{ min-height:280px; }
+      button{
+        width:100%;
+        min-width:100%;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <h1>Scanner TNE</h1>
+    <p>Duoc UC · Sede Plaza Vespucio</p>
+  </div>
+
+  <div class="wrap">
+    <div class="card">
+      <div class="pill">Modo retiro express</div>
+
+      <div id="status" class="status warn">
+        Preparando cámara...
+      </div>
+
+      <div class="reader-shell">
+        <div id="reader"></div>
+      </div>
+
+      <div class="actions">
+        <button class="btn-yellow" type="button" onclick="iniciarScanner()">
+          Reintentar cámara
+        </button>
+        <button class="btn-light" type="button" onclick="volverAlPanel()">
+          Volver al panel
+        </button>
+      </div>
+
+      <p class="hint">
+        Apunta la cámara trasera al QR del estudiante. Al leerlo, volverá automáticamente al panel de retiro y buscará el registro.
+      </p>
+    </div>
+  </div>
+
+  <script>
+    const FALLBACK_RETURN_URL = 'https://script.google.com/macros/s/AKfycbztfJjgGNMGxBm5rJo5OpIfOyTGVQoWM6kfiRBYyMXa1BU_UfMY1urr7ykLffcdfpNi3A/exec?view=retiro';
+
+    let scanner = null;
+    let scannerActivo = false;
+    let procesando = false;
+
+    function setStatus(texto, tipo) {
+      const el = document.getElementById('status');
+      el.className = 'status ' + (tipo || 'warn');
+      el.textContent = texto || '';
+    }
+
+    function obtenerParametro(nombre) {
+      const params = new URLSearchParams(window.location.search);
+      return params.get(nombre) || '';
+    }
+
+    function obtenerReturnUrlSeguro() {
+      const raw =
+        obtenerParametro('returnUrl') ||
+        obtenerParametro('return') ||
+        FALLBACK_RETURN_URL;
+
+      try {
+        const url = new URL(raw);
+
+        if (url.hostname !== 'script.google.com') {
+          return FALLBACK_RETURN_URL;
+        }
+
+        if (!url.pathname.includes('/macros/s/')) {
+          return FALLBACK_RETURN_URL;
+        }
+
+        url.searchParams.set('view', 'retiro');
+        url.searchParams.delete('key');
+
+        return url.toString();
+      } catch (e) {
+        return FALLBACK_RETURN_URL;
+      }
+    }
+
+    function extraerClaveRetiroDesdeTexto(textoOriginal) {
+      const texto = String(textoOriginal || '').trim();
+
+      if (!texto) return '';
+
+      try {
+        const url = new URL(texto);
+
+        const valor =
+          url.searchParams.get('token') ||
+          url.searchParams.get('code') ||
+          url.searchParams.get('codigo') ||
+          url.searchParams.get('codigoRetiro') ||
+          url.searchParams.get('rut') ||
+          url.searchParams.get('run') ||
+          url.searchParams.get('folio') ||
+          url.searchParams.get('query') ||
+          url.searchParams.get('q');
+
+        if (valor) return String(valor).trim();
+      } catch (e) {
+        // El QR puede traer solo código/token, no una URL.
+      }
+
+      const match = texto.match(/[?&](token|code|codigo|codigoRetiro|rut|run|folio|query|q)=([^&#]+)/i);
+      if (match && match[2]) {
+        return decodeURIComponent(match[2]).trim();
+      }
+
+      return texto;
+    }
+
+    function volverAlPanel() {
+      window.location.assign(obtenerReturnUrlSeguro());
+    }
+
+    async function detenerScanner() {
+      try {
+        if (scanner && scannerActivo) {
+          await scanner.stop();
+        }
+
+        if (scanner) {
+          await scanner.clear();
+        }
+      } catch (e) {
+        console.warn('No se pudo detener el scanner limpiamente:', e);
+      }
+
+      scanner = null;
+      scannerActivo = false;
+    }
+
+    async function iniciarScanner() {
+      if (procesando) return;
+
+      if (typeof Html5Qrcode === 'undefined') {
+        setStatus('No se pudo cargar el lector QR. Revisa conexión a internet y recarga la página.', 'error');
+        return;
+      }
+
+      await detenerScanner();
+
+      setStatus('Solicitando permiso de cámara...', 'warn');
+
+      try {
+        scanner = new Html5Qrcode('reader');
+
+        const readerEl = document.getElementById('reader');
+        const readerWidth = readerEl.offsetWidth || 320;
+        const qrSize = Math.min(320, Math.floor(readerWidth * 0.78));
+
+        const config = {
+          fps: 14,
+          qrbox: {
+            width: qrSize,
+            height: qrSize
+          },
+          aspectRatio: 1.333
+        };
+
+        try {
+          await scanner.start(
+            { facingMode: 'environment' },
+            config,
+            onScanSuccess,
+            onScanFailure
+          );
+        } catch (firstError) {
+          const cameras = await Html5Qrcode.getCameras();
+
+          if (!cameras || !cameras.length) {
+            throw firstError;
+          }
+
+          const backCamera =
+            cameras.find(cam => /back|rear|environment|trasera|posterior/i.test(cam.label)) ||
+            cameras[cameras.length - 1];
+
+          await scanner.start(
+            backCamera.id,
+            config,
+            onScanSuccess,
+            onScanFailure
+          );
+        }
+
+        scannerActivo = true;
+        setStatus('Cámara activa. Apunta al QR del estudiante.', 'ok');
+
+      } catch (err) {
+        console.error('Error abriendo cámara:', err);
+        setStatus('No se pudo abrir la cámara. Revisa permisos del sitio o prueba recargar esta página.', 'error');
+      }
+    }
+
+    function onScanFailure(errorMessage) {
+      // Silencioso: mientras no detecta QR, la librería genera avisos internos.
+    }
+
+    async function onScanSuccess(decodedText) {
+      if (procesando) return;
+      procesando = true;
+
+      const clave = extraerClaveRetiroDesdeTexto(decodedText);
+
+      if (!clave) {
+        setStatus('El QR fue leído, pero no contiene un token o código válido.', 'error');
+        procesando = false;
+        return;
+      }
+
+      setStatus('QR leído. Volviendo al panel de retiro...', 'ok');
+
+      await detenerScanner();
+
+      const destino = new URL(obtenerReturnUrlSeguro());
+      destino.searchParams.set('view', 'retiro');
+      destino.searchParams.set('token', clave);
+      destino.searchParams.set('code', clave);
+      destino.searchParams.set('fromScanner', '1');
+
+      setTimeout(() => {
+        window.location.assign(destino.toString());
+      }, 260);
+    }
+
+    window.addEventListener('load', () => {
+      setTimeout(iniciarScanner, 350);
+    });
+
+    window.addEventListener('beforeunload', () => {
+      detenerScanner();
+    });
+  </script>
+</body>
+</html>
